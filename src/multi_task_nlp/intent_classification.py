@@ -18,9 +18,11 @@ import torch
 import torch.nn as nn
 from datasets import load_dataset
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer
+
 import wandb
 
 
@@ -59,17 +61,22 @@ class IntentDataset(Dataset):
 class IntentClassifier(nn.Module):
     """Intent classification model using DistilBERT."""
 
-    def __init__(self, model_name: str, num_classes: int, dropout: float = 0.3):
+    def __init__(self, model_name: str, num_classes: int, freeze_bert: bool = False):
         super().__init__()
         self.bert = AutoModel.from_pretrained(model_name)
-        self.dropout = nn.Dropout(dropout)
+
+        if freeze_bert:
+            for param in self.bert.parameters():
+                param.requires_grad = False
+
+        # self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(self.bert.config.hidden_size, num_classes)
 
     def forward(self, input_ids, attention_mask):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         # Use the hidden state of the first token ([CLS])
         cls_output = outputs.last_hidden_state[:, 0, :]
-        cls_output = self.dropout(cls_output)
+        # cls_output = self.dropout(cls_output)
         logits = self.classifier(cls_output)
         return logits
 
@@ -77,23 +84,12 @@ class IntentClassifier(nn.Module):
 class IntentClassifierLightning(pl.LightningModule):
     """PyTorch Lightning module for intent classification."""
 
-    def __init__(self, model_name: str, num_classes: int, learning_rate: float = 2e-5):
+    def __init__(self, model_name: str, num_classes: int, learning_rate: float = 2e-5, freeze_bert: bool = False):
         super().__init__()
         self.save_hyperparameters()
-        self.model = IntentClassifier(model_name, num_classes)
-        self.criterion = nn.CrossEntropyLoss()
+        self.model = IntentClassifier(model_name, num_classes, freeze_bert=freeze_bert)
+        self.loss_fn = nn.CrossEntropyLoss()
         self.learning_rate = learning_rate
-
-        # Initialize Weights and Biases
-        wandb.init(project='your_project_name', entity='your_entity_name')
-        self.log_hyperparams()  # Log hyperparameters to W&B
-
-    def log_hyperparams(self):
-        wandb.config.update({
-            "model_name": self.hparams.model_name,
-            "num_classes": self.hparams.num_classes,
-            "learning_rate": self.hparams.learning_rate,
-        })
 
     def forward(self, input_ids, attention_mask):
         return self.model(input_ids, attention_mask)
@@ -104,18 +100,15 @@ class IntentClassifierLightning(pl.LightningModule):
         labels = batch["labels"]
 
         logits = self(input_ids, attention_mask)
-        loss = self.criterion(logits, labels)
+        loss = self.loss_fn(logits, labels)
 
         preds = torch.argmax(logits, dim=1)
         acc = (preds == labels).float().mean()
 
-        self.log("train_loss", loss, prog_bar=True)
-        self.log("train_acc", acc, prog_bar=True)
+        self.log("train/loss", loss, prog_bar=True)
+        self.log("train/acc", acc, prog_bar=True)
 
-        # Log metrics to W&B
-        wandb.log({"train_loss": loss, "train_acc": acc})
-
-        return loss
+        return {"loss": loss, "acc": acc}
 
     def validation_step(self, batch, batch_idx):
         input_ids = batch["input_ids"]
@@ -123,18 +116,15 @@ class IntentClassifierLightning(pl.LightningModule):
         labels = batch["labels"]
 
         logits = self(input_ids, attention_mask)
-        loss = self.criterion(logits, labels)
+        loss = self.loss_fn(logits, labels)
 
         preds = torch.argmax(logits, dim=1)
         acc = (preds == labels).float().mean()
 
-        self.log("val_loss", loss, prog_bar=True)
-        self.log("val_acc", acc, prog_bar=True)
+        self.log("val/loss", loss, prog_bar=True)
+        self.log("val/acc", acc, prog_bar=True)
 
-        # Log metrics to W&B
-        wandb.log({"val_loss": loss, "val_acc": acc})
-
-        return loss
+        return {"loss": loss, "acc": acc}
 
     def test_step(self, batch, batch_idx):
         input_ids = batch["input_ids"]
@@ -142,18 +132,15 @@ class IntentClassifierLightning(pl.LightningModule):
         labels = batch["labels"]
 
         logits = self(input_ids, attention_mask)
-        loss = self.criterion(logits, labels)
+        loss = self.loss_fn(logits, labels)
 
         preds = torch.argmax(logits, dim=1)
         acc = (preds == labels).float().mean()
 
-        self.log("test_loss", loss, prog_bar=True)
-        self.log("test_acc", acc, prog_bar=True)
+        self.log("test/loss", loss, prog_bar=True)
+        self.log("test/acc", acc, prog_bar=True)
 
-        # Log metrics to W&B
-        wandb.log({"test_loss": loss, "test_acc": acc})
-
-        return {"test_loss": loss, "test_acc": acc}
+        return {"loss": loss, "acc": acc}
 
     def configure_optimizers(self):
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -234,39 +221,46 @@ def train_intent_classifier():
     # Set random seed for reproducibility
     pl.seed_everything(42)
 
+    # Login to W&B
+    wandb.login()
+
     # Parameters
     MODEL_NAME = "distilbert/distilbert-base-uncased"
     BATCH_SIZE = 32
-    MAX_EPOCHS = 10
+    MAX_EPOCHS = None  # 10
+    MAX_STEPS = 30
     LEARNING_RATE = 2e-5
 
     # Initialize data module
-    data_module = IntentDataModule(model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.15)
+    data_module = IntentDataModule(model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.5)
     data_module.setup()
 
     # Initialize model
     model = IntentClassifierLightning(
-        model_name=MODEL_NAME, num_classes=data_module.num_classes, learning_rate=LEARNING_RATE
+        model_name=MODEL_NAME, num_classes=data_module.num_classes, learning_rate=LEARNING_RATE, freeze_bert=True
     )
 
     # Callbacks
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss",
+        monitor="val/loss",
         dirpath="checkpoints",
-        filename="intent-classifier-{epoch:02d}-{val_loss:.2f}",
+        filename="voize-intent-classifier-{epoch:02d}-{val_loss:.2f}",
         save_top_k=3,
         mode="min",
     )
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", patience=3, mode="min", verbose=True)
+    early_stop_callback = EarlyStopping(monitor="val/loss", patience=3, mode="min", verbose=True)
 
     # Initialize trainer
     trainer = pl.Trainer(
         max_epochs=MAX_EPOCHS,
+        max_steps=MAX_STEPS,
         callbacks=[checkpoint_callback, early_stop_callback],
         accelerator="auto",
-        devices=1,
-        log_every_n_steps=10,
+        # devices=1,
+        log_every_n_steps=1,
+        logger=WandbLogger(project="voyze-intent-classification"),
+        val_check_interval=10,
     )
 
     # Train model
