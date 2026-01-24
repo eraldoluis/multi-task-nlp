@@ -1,0 +1,53 @@
+[project]
+name = "multi-task-nlp"
+version = "0.1.0"
+description = "Multi-task NLP Python package comprising data loading, training and evaluation"
+readme = "README.md"
+authors = [
+  {name = "Eraldo R. Fernandes", email = "eraldoluis@gmail.com"}
+]
+maintainers = [
+  {name = "Eraldo R. Fernandes", email = "eraldoluis@gmail.com"}
+]
+classifiers = [
+    # TODO
+]
+license = {text = "MIT"}
+dependencies = [
+  "torch",
+  "cyclopts"
+]
+requires-python = ">= 3.10"
+
+[project.optional-dependencies]
+test = [
+  "coverage",  # testing
+  "pytest",  # testing
+]
+dev = [
+  "ruff",  # linting
+]
+
+[project.urls]
+bugs = "https://github.com/eraldoluis/multi_task_nlp/issues"
+changelog = "https://github.com/eraldoluis/multi_task_nlp/blob/master/changelog.md"
+homepage = "https://github.com/eraldoluis/multi_task_nlp"
+
+[project.scripts]
+multi_task_nlp = "multi_task_nlp.cli:app"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+[tool.uv]
+package = true
