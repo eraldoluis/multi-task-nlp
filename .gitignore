@@ -191,5 +191,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# PyTorch Lightning logs
+# PyTorch Lightning
 lightning_logs/
+checkpoints/
+
+# W&B
+wandb/
