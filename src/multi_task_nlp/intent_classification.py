@@ -29,6 +29,13 @@ import wandb
 class IntentDataset(Dataset):
     """Dataset class for intent classification."""
 
+    # FIXME (eraldoluis): this implementation is quite inefficient mainly due to two things:
+    # - It tokenizes one input at a time, not making use of FastTokenizers parallelization (batch).
+    # - It pads all sequences to max_length, instead of using dynamic padding per batch.
+    #
+    # I also don't like converting the original dataset to lists of texts and labels just to create another dataset.
+    # Instead we could use the map method from the datasets library to tokenize the inputs and create a new dataset.
+
     def __init__(self, texts: list[str], labels: list[int], tokenizer, max_length: int = 128):
         self.texts = texts
         self.labels = labels
@@ -58,6 +65,71 @@ class IntentDataset(Dataset):
         }
 
 
+class IntentDataModule(pl.LightningDataModule):
+    """Data module for loading and preparing the ATIS dataset."""
+
+    def __init__(self, model_name: str, batch_size: int = 32, max_length: int = 128, val_split: float = 0.15):
+        super().__init__()
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.val_split = val_split
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.label_encoder = LabelEncoder()
+
+    def prepare_data(self):
+        # Download dataset
+        load_dataset("tuetschek/atis")
+
+    def setup(self, stage=None):
+        # Load dataset
+        dataset = load_dataset("tuetschek/atis")
+
+        # Extract train and test data
+        train_data = dataset["train"]
+        test_data = dataset["test"]
+
+        # Fit label encoder on all labels
+        all_labels = list(train_data["intent"]) + list(test_data["intent"])
+        self.label_encoder.fit(all_labels)
+        self.num_classes = len(self.label_encoder.classes_)
+
+        # Split train into train and validation
+        train_size = int((1 - self.val_split) * len(train_data))
+        indices = np.random.permutation(len(train_data))
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:]
+
+        # Create train dataset
+        train_texts = [train_data["text"][i] for i in train_indices]
+        train_labels = self.label_encoder.transform([train_data["intent"][i] for i in train_indices])
+        self.train_dataset = IntentDataset(train_texts, train_labels, self.tokenizer, self.max_length)
+
+        # Create validation dataset
+        val_texts = [train_data["text"][i] for i in val_indices]
+        val_labels = self.label_encoder.transform([train_data["intent"][i] for i in val_indices])
+        self.val_dataset = IntentDataset(val_texts, val_labels, self.tokenizer, self.max_length)
+
+        # Create test dataset
+        test_texts = test_data["text"]
+        test_labels = self.label_encoder.transform(test_data["intent"])
+        self.test_dataset = IntentDataset(test_texts, test_labels, self.tokenizer, self.max_length)
+
+        print(f"Number of classes: {self.num_classes}")
+        print(f"Train size: {len(self.train_dataset)}")
+        print(f"Validation size: {len(self.val_dataset)}")
+        print(f"Test size: {len(self.test_dataset)}")
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=4)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=4)
+
+
 class IntentClassifier(nn.Module):
     """Intent classification model using DistilBERT."""
 
@@ -66,8 +138,17 @@ class IntentClassifier(nn.Module):
         self.bert = AutoModel.from_pretrained(model_name)
 
         if freeze_bert:
-            for param in self.bert.parameters():
-                param.requires_grad = False
+            # FIXME (eraldoluis): if we freeze the whole BERT encoder, the model can't learn because it is using the
+            # hidden representation of the first token ([CLS]) as input for the classifier. This representation is not
+            # meaningful for the classification task. One alternative is to unfree the last layer of BERT and freeze all
+            # the rest. Another option is to add an attention pooling layer on top of BERT so that the hidden vectors of
+            # all tokens are used to create a more meaningful representation for the classification task.
+
+            # freeze all BERT params but the ones in the last layer
+            idx_last_layer = self.bert.config.n_layers - 1
+            for name, param in self.bert.named_parameters():
+                if not name.startswith(f"transformer.layer.{idx_last_layer}."):
+                    param.requires_grad = False
 
         # self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(self.bert.config.hidden_size, num_classes)
@@ -150,73 +231,10 @@ class IntentClassifierLightning(pl.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
 
 
-class IntentDataModule(pl.LightningDataModule):
-    """Data module for loading and preparing the ATIS dataset."""
-
-    def __init__(self, model_name: str, batch_size: int = 32, max_length: int = 128, val_split: float = 0.15):
-        super().__init__()
-        self.model_name = model_name
-        self.batch_size = batch_size
-        self.max_length = max_length
-        self.val_split = val_split
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.label_encoder = LabelEncoder()
-
-    def prepare_data(self):
-        # Download dataset
-        load_dataset("tuetschek/atis")
-
-    def setup(self, stage=None):
-        # Load dataset
-        dataset = load_dataset("tuetschek/atis")
-
-        # Extract train and test data
-        train_data = dataset["train"]
-        test_data = dataset["test"]
-
-        # Fit label encoder on all labels
-        all_labels = list(train_data["intent"]) + list(test_data["intent"])
-        self.label_encoder.fit(all_labels)
-        self.num_classes = len(self.label_encoder.classes_)
-
-        # Split train into train and validation
-        train_size = int((1 - self.val_split) * len(train_data))
-        indices = np.random.permutation(len(train_data))
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:]
-
-        # Create train dataset
-        train_texts = [train_data["text"][i] for i in train_indices]
-        train_labels = self.label_encoder.transform([train_data["intent"][i] for i in train_indices])
-        self.train_dataset = IntentDataset(train_texts, train_labels, self.tokenizer, self.max_length)
-
-        # Create validation dataset
-        val_texts = [train_data["text"][i] for i in val_indices]
-        val_labels = self.label_encoder.transform([train_data["intent"][i] for i in val_indices])
-        self.val_dataset = IntentDataset(val_texts, val_labels, self.tokenizer, self.max_length)
-
-        # Create test dataset
-        test_texts = test_data["text"]
-        test_labels = self.label_encoder.transform(test_data["intent"])
-        self.test_dataset = IntentDataset(test_texts, test_labels, self.tokenizer, self.max_length)
-
-        print(f"Number of classes: {self.num_classes}")
-        print(f"Train size: {len(self.train_dataset)}")
-        print(f"Validation size: {len(self.val_dataset)}")
-        print(f"Test size: {len(self.test_dataset)}")
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=4)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=4)
-
-
 def train_intent_classifier():
     """Main training function."""
+
+    # TODO convert this to a function so that we can easily create a cyclopts CLI.
 
     # Set random seed for reproducibility
     pl.seed_everything(42)
