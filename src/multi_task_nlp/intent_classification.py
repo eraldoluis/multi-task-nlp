@@ -89,6 +89,9 @@ class IntentDataModule(pl.LightningDataModule):
         train_data = dataset["train"]
         test_data = dataset["test"]
 
+        # Handle multi-label intents by taking only the last intent
+        dataset.map(lambda ex: {**ex, "intent": ex["intent"].split("+")[-1]}, num_proc=10)
+
         # Fit label encoder on all labels
         all_labels = list(train_data["intent"]) + list(test_data["intent"])
         self.label_encoder.fit(all_labels)
@@ -97,6 +100,7 @@ class IntentDataModule(pl.LightningDataModule):
         # Split train into train and validation
         train_size = int((1 - self.val_split) * len(train_data))
         indices = np.random.permutation(len(train_data))
+        # train_indices = indices[:int(train_size*0.1)]
         train_indices = indices[:train_size]
         val_indices = indices[train_size:]
 
@@ -236,6 +240,8 @@ def train_intent_classifier():
 
     # TODO convert this to a function so that we can easily create a cyclopts CLI.
 
+    # TODO add yaml config support so that we can have recipes for different experiments.
+
     # Set random seed for reproducibility
     pl.seed_everything(42)
 
@@ -245,12 +251,12 @@ def train_intent_classifier():
     # Parameters
     MODEL_NAME = "distilbert/distilbert-base-uncased"
     BATCH_SIZE = 32
-    MAX_EPOCHS = None  # 10
-    MAX_STEPS = 30
+    MAX_EPOCHS = 1
+    MAX_STEPS = None  # 30
     LEARNING_RATE = 2e-5
 
     # Initialize data module
-    data_module = IntentDataModule(model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.5)
+    data_module = IntentDataModule(model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.15)
     data_module.setup()
 
     # Initialize model
