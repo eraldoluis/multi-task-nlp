@@ -29,10 +29,10 @@ Parts of the code for token classification were copied from the [HF LLM Course](
 * Train using PyTorch Lightning
     * Uni- or multi-task training
     * Arbitrary combination of tasks
-    * *TODO* Train resumption
+    * *TODO* Train resumption from a checkpoint
 * Evaluation #TODO
     * Precision, Recall, F-score for multi-class and entity detection tasks (intent and slot filling, for instance)
-* Tests #TODO
+* *TODO* Tests
     * Docker
     * Justfile
     * Github Actions

@@ -9,15 +9,15 @@ import torch.nn as nn
 from datasets import load_dataset
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from transformers import AutoModel, AutoTokenizer, DataCollatorWithPadding
-from transformers.data.data_collator import pad_without_fast_tokenizer_warning
 
 import wandb
+from multi_task_nlp.config import Config
+from multi_task_nlp.util import LabelEncoder
 
 
-class SlotFillingDataModule(pl.LightningDataModule):
+class TokenClassificationDataModule(pl.LightningDataModule):
     """Data module for loading and preparing the ATIS dataset with slot filling labels.
 
     The ATIS dataset contains four columns:
@@ -43,18 +43,118 @@ class SlotFillingDataModule(pl.LightningDataModule):
     KEEP_COLUMNS = ["input_ids", "attention_mask", "label_ids"]
     """Columns to keep for training and evaluation (for the DataLoaders)."""
 
+    BIO_ENTITIES = [
+        "fromloc",
+        "depart_time",
+        "toloc",
+        "arrive_time",
+        "depart_date",
+        "flight_time",
+        "cost_relative",
+        "round_trip",
+        "fare_amount",
+        "city_name",
+        "stoploc",
+        "class_type",
+        "airline_name",
+        "mod",
+        "fare_basis_code",
+        "transport_type",
+        "flight_mod",
+        "arrive_date",
+        "meal",
+        "meal_description",
+        "return_date",
+        "airline_code",
+        "flight_stop",
+        "time",
+        "or",
+        "economy",
+        "flight_number",
+        "flight_days",
+        "state_code",
+        "airport_code",
+        "aircraft_code",
+        "connect",
+        "restriction_code",
+        "airport_name",
+        "days_code",
+        "day_name",
+        "period_of_day",
+        "today_relative",
+        "meal_code",
+        "state_name",
+        "time_relative",
+        "return_time",
+        "month_name",
+        "day_number",
+        "compartment",
+        "booking_class",
+        "flight",
+    ]
+
     def __init__(
-        self, model_name: str, batch_size: int = 32, max_length: int = 128, val_split: float = 0.15, num_proc: int = 10
+        self, dataset_name: str, model_name: str, batch_size: int = 32, max_length: int = 128, val_split: float = 0.15, num_proc: int = 10
     ):
         super().__init__()
+        self.dataset_name = dataset_name
         self.model_name = model_name
         self.batch_size = batch_size
         self.max_length = max_length
         self.val_split = val_split
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.label_encoder = LabelEncoder()
+        self.label_encoder = LabelEncoder(
+            ["O"] + [f"{pref}-{entity}" for entity in TokenClassificationDataModule.BIO_ENTITIES for pref in ["B", "I"]]
+        )
         self.num_proc = num_proc
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
+
+    @property
+    def num_classes(self) -> int:
+        return len(self.label_encoder.labels)
+
+    def prepare_data(self):
+        # Download dataset
+        load_dataset(self.dataset_name)
+
+    def setup(self, stage=None):
+        # Load dataset
+        dataset = load_dataset(self.dataset_name)
+
+        # Prepare each input
+        dataset = dataset.map(self._prepare_input, num_proc=self.num_proc)
+
+        # Encode labels
+        dataset = dataset.map(
+            lambda ex: {"label_ids": self.label_encoder.transform(ex["slots"])}, num_proc=self.num_proc
+        )
+
+        # Tokenize input and align labels with tokens
+        dataset = dataset.map(
+            self._tokenize_and_align_labels,
+            batched=True,
+            num_proc=self.num_proc,
+        )
+
+        dataset = dataset.remove_columns(set(dataset["train"].column_names) - set(self.KEEP_COLUMNS))
+
+        # Split train into train and validation
+        train_data = dataset["train"]
+        train_size = int((1 - self.val_split) * len(train_data))
+        indices = np.random.permutation(len(train_data))
+        # train_indices = indices[:int(train_size*0.1)]
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:]
+
+        # Create train dataset
+        self.train_dataset = train_data.select(train_indices)
+        self.val_dataset = train_data.select(val_indices)
+        self.test_dataset = dataset["test"]
+
+        print(f"Number of classes: {self.num_classes}")
+        print(f"Train size: {len(self.train_dataset)}")
+        print(f"Validation size: {len(self.val_dataset)}")
+        print(f"Test size: {len(self.test_dataset)}")
 
     def _prepare_input(self, example: dict) -> dict:
         """Prepares a single example for the model.
@@ -72,7 +172,7 @@ class SlotFillingDataModule(pl.LightningDataModule):
         }
 
     def _tokenize_and_align_labels(self, examples: dict) -> dict:
-        """Tokenizes the input and aligns the labels with the tokens.
+        """Tokenizes the input words and aligns the word-level labels with the tokens.
 
         Source: adapted from https://huggingface.co/learn/llm-course/chapter7/2
 
@@ -137,72 +237,18 @@ class SlotFillingDataModule(pl.LightningDataModule):
                 # If the label is B-XXX we change it to I-XXX
                 if label.startswith("B-"):
                     label = "I-" + label[2:]
-                    label_id = int(self.label_encoder.transform([label])[0])
+                    label_id = self.label_encoder.transform(label)
                 new_labels.append(label)
                 new_label_ids.append(label_id)
 
         return new_labels, new_label_ids
-
-    def prepare_data(self):
-        # Download dataset
-        load_dataset("tuetschek/atis")
-
-    def setup(self, stage=None):
-        # Load dataset
-        dataset = load_dataset("tuetschek/atis")
-
-        # Prepare each input
-        dataset = dataset.map(self._prepare_input, num_proc=self.num_proc)
-
-        # All labels without B or I
-        all_labels = sorted(
-            {label[2:] for split in dataset.values() for labels in split["slots"] for label in labels if label != "O"}
-        )
-        # Add O, B- and I- labels
-        all_labels = ["O"] + [f"B-{label}" for label in all_labels] + [f"I-{label}" for label in all_labels]
-        # Fit the encoder
-        self.label_encoder.fit(all_labels)
-        # Number of classes
-        self.num_classes = len(self.label_encoder.classes_)
-
-        # Encode labels
-        dataset = dataset.map(
-            lambda ex: {"label_ids": self.label_encoder.transform(ex["slots"]).tolist()}, num_proc=self.num_proc
-        )
-
-        # Tokenize input and align labels with tokens
-        dataset = dataset.map(
-            self._tokenize_and_align_labels,
-            batched=True,
-            num_proc=self.num_proc,
-        )
-
-        dataset = dataset.remove_columns(set(dataset["train"].column_names) - set(self.KEEP_COLUMNS))
-
-        # Split train into train and validation
-        train_data = dataset["train"]
-        train_size = int((1 - self.val_split) * len(train_data))
-        indices = np.random.permutation(len(train_data))
-        # train_indices = indices[:int(train_size*0.1)]
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:]
-
-        # Create train dataset
-        self.train_dataset = train_data.select(train_indices)
-        self.val_dataset = train_data.select(val_indices)
-        self.test_dataset = dataset["test"]
-
-        print(f"Number of classes: {self.num_classes}")
-        print(f"Train size: {len(self.train_dataset)}")
-        print(f"Validation size: {len(self.val_dataset)}")
-        print(f"Test size: {len(self.test_dataset)}")
 
     def _collate_fn(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         # remove label_ids from batch to avoid warning from DataCollatorWithPadding
         batch_no_label = [{k: v for k, v in example.items() if k != "label_ids"} for example in batch]
         batch_collated = self.data_collator(batch_no_label)
         # pad label sequences and add them to the batches
-        batch_collated["label_ids"] = torch.nn.utils.rnn.pad_sequence(
+        batch_collated["label_ids"] = nn.utils.rnn.pad_sequence(
             [torch.tensor(example["label_ids"]) for example in batch],
             batch_first=True,
             padding_value=-100,
@@ -224,12 +270,12 @@ class SlotFillingDataModule(pl.LightningDataModule):
 class TokenClassifier(nn.Module):
     """Token classification model using BERT-like encoder."""
 
-    def __init__(self, model_name: str, num_classes: int, freeze_bert: bool = False):
+    def __init__(self, model_name: str, num_classes: int, freeze_encoder: bool = False):
         super().__init__()
         self.bert = AutoModel.from_pretrained(model_name)
 
-        if freeze_bert:
-            # FIXME (eraldoluis): if we freeze the whole BERT encoder, the model can't learn because it is using the
+        if freeze_encoder:
+            # TODO (eraldoluis): if we freeze the whole encoder, the model can't learn because it is using the
             # hidden representation of the first token ([CLS]) as input for the classifier. This representation is not
             # meaningful for the classification task. One alternative is to unfree the last layer of BERT and freeze all
             # the rest. Another option is to add an attention pooling layer on top of BERT so that the hidden vectors of
@@ -255,10 +301,10 @@ class TokenClassifier(nn.Module):
 class TokenClassifierLightning(pl.LightningModule):
     """PyTorch Lightning module for token classification."""
 
-    def __init__(self, model_name: str, num_classes: int, learning_rate: float = 2e-5, freeze_bert: bool = False):
+    def __init__(self, model_name: str, num_classes: int, learning_rate: float = 2e-5, freeze_encoder: bool = False):
         super().__init__()
         self.save_hyperparameters()
-        self.model = TokenClassifier(model_name, num_classes, freeze_bert=freeze_bert)
+        self.model = TokenClassifier(model_name, num_classes, freeze_encoder=freeze_encoder)
         self.loss_fn = nn.CrossEntropyLoss()
         self.learning_rate = learning_rate
 
@@ -301,41 +347,42 @@ class TokenClassifierLightning(pl.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
 
 
-def train_token_classifier():
-    """Main training function."""
+def train_token_classifier(config: Config):
+    """Training function for token classification."""
 
     # TODO convert this to a function so that we can easily create a cyclopts CLI.
 
     # TODO add yaml config support so that we can have recipes for different experiments.
 
-    # Set random seed for reproducibility
-    pl.seed_everything(42)
+    if config.seed is not None:
+        pl.seed_everything(config.seed)
 
-    # Login to W&B
-    wandb.login()
+    if config.wandb:
+        wandb.login()
 
-    # Parameters
-    MODEL_NAME = "distilbert/distilbert-base-uncased"
-    BATCH_SIZE = 32
-    MAX_EPOCHS = 3
-    MAX_STEPS = -1  # 30
-    LEARNING_RATE = 2e-5
-
-    # Initialize data module
-    data_module = SlotFillingDataModule(model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.15)
-    data_module.setup()
+    # Initialize the data module
+    data_module = TokenClassificationDataModule(
+        dataset_name=config.data_processing.dataset_name,
+        model_name=config.encoder.model_name,
+        batch_size=config.data_processing.batch_size,
+        max_length=config.data_processing.max_length,
+        val_split=config.data_processing.val_split,
+    )
 
     # Initialize model
     model = TokenClassifierLightning(
-        model_name=MODEL_NAME, num_classes=data_module.num_classes, learning_rate=LEARNING_RATE, freeze_bert=True
+        model_name=config.encoder.model_name,
+        num_classes=data_module.num_classes,
+        learning_rate=config.trainer.learning_rate,
+        freeze_encoder=config.encoder.freeze_encoder,
     )
 
     # Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss",
         dirpath="checkpoints",
-        filename="voize-slot-filling-{epoch:02d}-{val_loss:.2f}",
-        save_top_k=3,
+        filename=f"{config.project_name}-{{epoch:02d}}-{{val_loss:.2f}}",
+        save_top_k=1,
         mode="min",
     )
 
@@ -343,13 +390,12 @@ def train_token_classifier():
 
     # Initialize trainer
     trainer = pl.Trainer(
-        max_epochs=MAX_EPOCHS,
-        max_steps=MAX_STEPS,
+        max_epochs=config.trainer.max_epochs,
+        max_steps=config.trainer.max_steps,
         callbacks=[checkpoint_callback, early_stop_callback],
         accelerator="auto",
-        # devices=1,
-        log_every_n_steps=1,
-        logger=WandbLogger(project="voyze-slot-filling"),
+        log_every_n_steps=5,
+        logger=WandbLogger(project=config.project_name) if config.wandb else None,
         val_check_interval=10,
     )
 
@@ -363,7 +409,3 @@ def train_token_classifier():
 
     print("\nTraining complete!")
     print(f"Best model saved at: {checkpoint_callback.best_model_path}")
-
-
-if __name__ == "__main__":
-    train_token_classifier()
