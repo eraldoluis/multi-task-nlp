@@ -19,15 +19,15 @@ import torch.nn as nn
 from datasets import load_dataset
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer
 
 import wandb
+from multi_task_nlp.util import LabelEncoder
 
 
-class IntentDataset(Dataset):
-    """Dataset class for intent classification."""
+class TextClassificationDataset(Dataset):
+    """Dataset class for text classification."""
 
     # FIXME (eraldoluis): this implementation is quite inefficient mainly due to two things:
     # - It tokenizes one input at a time, not making use of FastTokenizers parallelization (batch).
@@ -65,8 +65,29 @@ class IntentDataset(Dataset):
         }
 
 
-class IntentDataModule(pl.LightningDataModule):
+class TextClassificationDataModule(pl.LightningDataModule):
     """Data module for loading and preparing the ATIS dataset."""
+
+    INTENTS = [
+        "flight",
+        "flight_time",
+        "airfare",
+        "aircraft",
+        "ground_service",
+        "airport",
+        "airline",
+        "distance",
+        "abbreviation",
+        "ground_fare",
+        "quantity",
+        "city",
+        "flight_no",
+        "capacity",
+        "meal",
+        "restriction",
+        "cheapest",
+        "day_name",
+    ]
 
     def __init__(self, model_name: str, batch_size: int = 32, max_length: int = 128, val_split: float = 0.15):
         super().__init__()
@@ -75,7 +96,11 @@ class IntentDataModule(pl.LightningDataModule):
         self.max_length = max_length
         self.val_split = val_split
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.label_encoder = LabelEncoder()
+        self.label_encoder = LabelEncoder(TextClassificationDataModule.INTENTS)
+
+    @property
+    def num_classes(self) -> int:
+        return len(self.label_encoder.labels)
 
     def prepare_data(self):
         # Download dataset
@@ -92,11 +117,6 @@ class IntentDataModule(pl.LightningDataModule):
         # Handle multi-label intents by taking only the last intent
         dataset.map(lambda ex: {**ex, "intent": ex["intent"].split("+")[-1]}, num_proc=10)
 
-        # Fit label encoder on all labels
-        all_labels = list(train_data["intent"]) + list(test_data["intent"])
-        self.label_encoder.fit(all_labels)
-        self.num_classes = len(self.label_encoder.classes_)
-
         # Split train into train and validation
         train_size = int((1 - self.val_split) * len(train_data))
         indices = np.random.permutation(len(train_data))
@@ -107,17 +127,17 @@ class IntentDataModule(pl.LightningDataModule):
         # Create train dataset
         train_texts = [train_data["text"][i] for i in train_indices]
         train_labels = self.label_encoder.transform([train_data["intent"][i] for i in train_indices])
-        self.train_dataset = IntentDataset(train_texts, train_labels, self.tokenizer, self.max_length)
+        self.train_dataset = TextClassificationDataset(train_texts, train_labels, self.tokenizer, self.max_length)
 
         # Create validation dataset
         val_texts = [train_data["text"][i] for i in val_indices]
         val_labels = self.label_encoder.transform([train_data["intent"][i] for i in val_indices])
-        self.val_dataset = IntentDataset(val_texts, val_labels, self.tokenizer, self.max_length)
+        self.val_dataset = TextClassificationDataset(val_texts, val_labels, self.tokenizer, self.max_length)
 
         # Create test dataset
         test_texts = test_data["text"]
         test_labels = self.label_encoder.transform(test_data["intent"])
-        self.test_dataset = IntentDataset(test_texts, test_labels, self.tokenizer, self.max_length)
+        self.test_dataset = TextClassificationDataset(test_texts, test_labels, self.tokenizer, self.max_length)
 
         print(f"Number of classes: {self.num_classes}")
         print(f"Train size: {len(self.train_dataset)}")
@@ -134,7 +154,7 @@ class IntentDataModule(pl.LightningDataModule):
         return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=4)
 
 
-class IntentClassifier(nn.Module):
+class TextClassifier(nn.Module):
     """Intent classification model using DistilBERT."""
 
     def __init__(self, model_name: str, num_classes: int, freeze_bert: bool = False):
@@ -166,13 +186,13 @@ class IntentClassifier(nn.Module):
         return logits
 
 
-class IntentClassifierLightning(pl.LightningModule):
+class TextClassifierLightning(pl.LightningModule):
     """PyTorch Lightning module for intent classification."""
 
     def __init__(self, model_name: str, num_classes: int, learning_rate: float = 2e-5, freeze_bert: bool = False):
         super().__init__()
         self.save_hyperparameters()
-        self.model = IntentClassifier(model_name, num_classes, freeze_bert=freeze_bert)
+        self.model = TextClassifier(model_name, num_classes, freeze_bert=freeze_bert)
         self.loss_fn = nn.CrossEntropyLoss()
         self.learning_rate = learning_rate
 
@@ -235,8 +255,8 @@ class IntentClassifierLightning(pl.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
 
 
-def train_intent_classifier():
-    """Main training function."""
+def train_text_classifier():
+    """Training function for text classification."""
 
     # TODO convert this to a function so that we can easily create a cyclopts CLI.
 
@@ -256,11 +276,12 @@ def train_intent_classifier():
     LEARNING_RATE = 2e-5
 
     # Initialize data module
-    data_module = IntentDataModule(model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.15)
-    data_module.setup()
+    data_module = TextClassificationDataModule(
+        model_name=MODEL_NAME, batch_size=BATCH_SIZE, max_length=128, val_split=0.15
+    )
 
     # Initialize model
-    model = IntentClassifierLightning(
+    model = TextClassifierLightning(
         model_name=MODEL_NAME, num_classes=data_module.num_classes, learning_rate=LEARNING_RATE, freeze_bert=True
     )
 
@@ -300,4 +321,4 @@ def train_intent_classifier():
 
 
 if __name__ == "__main__":
-    train_intent_classifier()
+    train_text_classifier()

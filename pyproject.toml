@@ -20,6 +20,7 @@ dependencies = [
   "transformers",
   "datasets",
   "lightning",
+  "pydantic",
   "cyclopts"
 ]
 requires-python = ">= 3.10"
