@@ -7,7 +7,7 @@ It currently supports the ATIS dataset and two tasks:
 - slot filling (via token classification using BIO tags).
 
 It supports training independent models for each individual task as well as a multi-task model that shares the same
-encoder for both tasks. In the multi-task mode, the encoder is training simultaneously using examples from both tasks.
+encoder for both tasks. In the multi-task mode, the encoder is trained simultaneously using examples from both tasks.
 When training a multi-task model, each example must include labels for both tasks.
 
 ## Credits
