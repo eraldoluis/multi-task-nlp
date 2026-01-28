@@ -29,6 +29,10 @@ parts, optimize other parts, and generalize the code. The following prompt was u
 > classification layer should be added on top of this model to predict the intent. The input for the classification
 > layer should be the hidden representation of the first token of the input.
 
+### GitHub Copilot
+
+I've used GitHub Copilot all the time while developing this project, mainly for inline suggestion.
+
 ### HuggingFace LLM Course
 
 Parts of the code for token classification were copied from the [HF LLM Course](https://huggingface.co/learn/llm-course/chapter7/2).
