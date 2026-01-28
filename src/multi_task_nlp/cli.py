@@ -11,8 +11,17 @@ app = App()
 
 
 @app.default()
-def main(*, config: Annotated[Config, Parameter(name="*")], task: Literal["text", "token", "multi"] = "multi"):
+def main(*, config: Annotated[Config, Parameter(name="*")], task: Literal["intent", "slots", "multi"] = "multi"):
     """Console script for multi_task_nlp for the ATIS dataset supporting intent classification and slot filling.
+
+    Example:
+    multi_task_nlp \
+        --task intent \
+        --project-name voize-atis-intent \
+        --encoder.model-name distilbert/distilbert-base-uncased \
+        --data-processing.dataset-name tuetschek/atis \
+        --seed 42 \
+        --wandb
 
     Args:
         config: The configuration for the task.

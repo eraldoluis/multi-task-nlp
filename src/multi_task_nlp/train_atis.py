@@ -3,6 +3,7 @@
 from typing import Literal
 
 import pytorch_lightning as pl
+import yaml
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
@@ -20,6 +21,13 @@ def train_atis_multi_task(config: Config, task: Literal["intent", "slots", "mult
         task: The type of task to run. Either "intent" for intent classification, "slots" for slot filling,
             or "multi" for multi-task learning.
     """
+
+    print("Config:")
+    print(yaml.dump(config.model_dump(exclude_defaults=True), indent=2))
+
+    print()
+    print("Full config:")
+    print(yaml.dump(config.model_dump(), indent=2))
 
     if config.seed is not None:
         pl.seed_everything(config.seed)

@@ -127,22 +127,26 @@ class AtisIntentClassificationAndSlotFillingDataModule(NlpDataModule):
         if task not in ["intent", "slots", "multi"]:
             raise ValueError(f"Unknown task: {task}. Must be one of 'intent', 'slots', or 'multi'.")
 
+        self.task = task
+
+        self._text_class_tasks = ["intent"] if task in ["intent", "multi"] else []
+        self._token_class_tasks = ["slots"] if task in ["slots", "multi"] else []
+
+        labels = {}
+        if task in ["intent", "multi"]:
+            labels["intent"] = self.INTENTS
+        if task in ["slots", "multi"]:
+            labels["slots"] = ["O"] + [f"{pref}-{entity}" for entity in self.SLOT_ENTITIES for pref in ["B", "I"]]
+
         super().__init__(
             dataset_name=dataset_name,
             model_name=model_name,
-            labels={
-                "intent": self.INTENTS,
-                "slots": ["O"] + [f"{pref}-{entity}" for entity in self.SLOT_ENTITIES for pref in ["B", "I"]],
-            },
+            labels=labels,
             batch_size=batch_size,
             max_length=max_length,
             val_split=val_split,
             num_proc=num_proc,
         )
-
-        self.task = task
-        self._text_class_tasks = ["intent"] if task in ["intent", "multi"] else []
-        self._token_class_tasks = ["slots"] if task in ["slots", "multi"] else []
 
     @property
     def text_class_tasks(self) -> list[str]:
