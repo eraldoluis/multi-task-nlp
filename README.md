@@ -1,11 +1,14 @@
 # multi-task-nlp
 
-![PyPI version](https://img.shields.io/pypi/v/multi-task-nlp.svg)
+Multi-task NLP Python package comprising data loading, training and evaluation.
+It is based on PyTorch Lightning and HuggingFace libs.
+It currently supports the ATIS dataset and two tasks:
+- intent classification, and
+- slot filling (via token classification using BIO tags).
 
-Multi-task NLP Python package comprising data loading, training and evaluation
-
-* PyPI package: https://pypi.org/project/multi-task-nlp/
-* Free software: MIT License
+It supports training independent models for each individual task as well as a multi-task model that shares the same
+encoder for both tasks. In the multi-task mode, the encoder is training simultaneously using examples from both tasks.
+When training a multi-task model, each example must include labels for both tasks.
 
 ## Credits
 
@@ -32,15 +35,37 @@ Parts of the code for token classification were copied from the [HF LLM Course](
 
 ## Features
 
-* Load any dataset from HuggingFace for training, validation and testing
-* Support multiple NLP tasks with shared encoder
+* Load any dataset from HuggingFace for training, validation and testing (following ATIS format)
+* Support multi-task NLP tasks with shared encoder
+* Support seamlessly adding new dataset formats
+* Easy to add new tasks (beyond text and token classification)
+* Support any token-based encoder from HF (freezing may not work for some)
 * Train using PyTorch Lightning
-    * Uni- or multi-task training
+    * Mono- or multi-task training
     * Arbitrary combination of tasks
-    * *TODO* Train resumption from a checkpoint
-* Evaluation #TODO
-    * Precision, Recall, F-score for multi-class and entity detection tasks (intent and slot filling, for instance)
-* *TODO* Tests
-    * Docker
-    * Justfile
-    * Github Actions
+* Evaluation
+    * Loss and token-level accuracy for each task and combined
+    * Testing after training
+
+### Upcoming features
+
+* Examples with incomplete task labels (currently all examples must be labeled with all tasks)
+* Train resumption from a checkpoint
+* Tests, linting and deployment
+    * Docker and Justfile for homogeneous tasks both locally and remotely
+    * CI/CD
+* Evaluation
+    * Precision, Recall, F-score for multi-class tasks
+    * Same for entity recognition/classification tasks
+    * Submit table to W&B with final test metrics
+
+## More general ideas related to multi-task NLP
+
+* Knowledge distillation
+    * Implement KD on the multi-task scenario so that a multi-task teacher can be used to distill a multi-task student
+    * Zero-shot LLM teacher: LLMs present a strong performance on several NLP tasks even on a zero-shot scenario.
+        This idea involves using a LLM with a zero-shot prompt for specific tasks in order to distill a student model using
+        the LLM logits for the task(s) at hand.
+* ASR features: incorporate outputs of the ASR encoder to improve dowstream tasks accuracy
+* ASR/NLP joint training: going deeper and integrating ASR and NLP training
+* Quantization
