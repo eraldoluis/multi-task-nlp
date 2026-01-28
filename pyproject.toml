@@ -1,6 +1,6 @@
 [project]
 name = "multi-task-nlp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-task NLP Python package comprising data loading, training and evaluation"
 readme = "README.md"
 authors = [
