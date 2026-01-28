@@ -44,6 +44,12 @@ class TrainerConfig(BaseModel):
     learning_rate: float = 2e-5
     """Learning rate for the optimizer."""
 
+    log_every_n_steps: int = 5
+    """How often to log training metrics."""
+
+    val_check_interval: int = 30
+    """How often (in steps) to check validation performance."""
+
 
 class Config(BaseModel):
     """Configuration for the multi_task_nlp CLI and Python API."""
