@@ -21,7 +21,8 @@ dependencies = [
   "datasets",
   "lightning",
   "pydantic",
-  "cyclopts"
+  "cyclopts",
+  "pyyaml"
 ]
 requires-python = ">= 3.10"
 

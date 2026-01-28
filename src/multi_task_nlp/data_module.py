@@ -49,11 +49,11 @@ class NlpDataModule(pl.LightningDataModule):
         self.val_split = val_split
         self.num_proc = num_proc
 
+        if labels.keys() != set(self.all_tasks):
+            raise ValueError(f"Labels ({labels.keys()}) and task names ({set(self.all_tasks)}) must match.")
+
         self.label_encoder = {task_name: LabelEncoder(labels) for task_name, labels in labels.items()}
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-        if self.label_encoder.keys() != set(self.token_class_tasks + self.text_class_tasks):
-            raise ValueError("Labels must be provided for all tasks defined in token_class_tasks and text_class_tasks.")
 
         # Collator used to pad inputs to the same length in a batch. Labels are padded in the collate_fn method
         # depending on the task type.
