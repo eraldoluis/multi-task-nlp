@@ -17,12 +17,10 @@ def main(*, config: Annotated[Config, Parameter(name="*")], task: Literal["inten
     Example usage:
     ```
     multi_task_nlp \\
-        --task intent \\
-        --project-name voize-atis-intent \\
+        --project-name atis-multi-task \\
         --encoder.model-name distilbert/distilbert-base-uncased \\
         --data-processing.dataset-name tuetschek/atis \\
-        --seed 42 \\
-        --wandb
+        --seed 42
     ```
 
     Args:

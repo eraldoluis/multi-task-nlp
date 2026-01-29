@@ -10,6 +10,33 @@ It supports training independent models for each individual task as well as a mu
 encoder for both tasks. In the multi-task mode, the encoder is trained simultaneously using examples from both tasks.
 When training a multi-task model, each example must include labels for both tasks.
 
+## Installation
+
+For now, the only supported installation is from source:
+```
+python3 -m venv venv
+source venv/bin/activate
+git clone git@github.com:eraldoluis/multi-task-nlp.git
+pip install -e ./multi-task-nlp/
+```
+
+## CLI
+
+After installation, you have access to the command `multi-task-nlp`.
+You can train a multi-task model for the ATIS dataset (intent classification and slot filling) using the following command:
+```
+multi_task_nlp \
+    --project-name atis-multi-task \
+    --encoder.model-name distilbert/distilbert-base-uncased \
+    --data-processing.dataset-name tuetschek/atis \
+    --seed 42
+```
+
+You can see all the available options by running:
+```
+multi_task_nlp --help
+```
+
 ## Credits
 
 ### Package template
@@ -51,7 +78,7 @@ Parts of the code for token classification were copied from the [HF LLM Course](
     * Loss and token-level accuracy for each task and combined
     * Testing after training
 
-### Upcoming features
+### Upcoming features and known issues
 
 * Examples with incomplete task labels (currently all examples must be labeled with all tasks)
 * Train resumption from a checkpoint
@@ -62,6 +89,10 @@ Parts of the code for token classification were copied from the [HF LLM Course](
     * Precision, Recall, F-score for multi-class tasks
     * Same for entity recognition/classification tasks
     * Submit table to W&B with final test metrics
+* Datasets caching (`map` method)
+    * It seems the caching mechanism of the `Dataset.map()` method is not working properly. This is probably due to the
+      use of object methods (which include the `self` argument), making them not serializable. I need to investigate
+      further on how to change that while still supporting the features of the framework.
 
 ## More general ideas related to multi-task NLP
 
